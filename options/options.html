@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sidebar — Settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <span class="logo">⬡</span>
+      <h1 class="title">Sidebar Settings</h1>
+    </header>
+
+    <main>
+      <!-- Detected domain -->
+      <section class="section">
+        <h2 class="section-title">Your Internal Domain</h2>
+        <p class="section-desc">
+          Auto-detected from your Gmail address. This domain is always treated as internal.
+        </p>
+        <div class="detected-domain-row">
+          <span class="domain-badge" id="detected-domain">—</span>
+          <span class="domain-source" id="detected-source"></span>
+        </div>
+      </section>
+
+      <!-- Additional domains -->
+      <section class="section">
+        <h2 class="section-title">Additional Internal Domains</h2>
+        <p class="section-desc">
+          Add partner or subsidiary domains that should be treated as internal.
+        </p>
+
+        <ul class="domain-list" id="domain-list"></ul>
+
+        <div class="add-domain-row">
+          <input
+            type="text"
+            id="new-domain"
+            class="input"
+            placeholder="example.com"
+            aria-label="New internal domain"
+            spellcheck="false"
+            autocomplete="off"
+          />
+          <button id="add-btn" class="btn btn-primary">Add</button>
+        </div>
+        <p class="error-msg hidden" id="error-msg"></p>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <a
+        href="https://chrome.google.com/webstore"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="footer-link"
+      >⬡ Sidebar</a>
+    </footer>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,121 @@
+/* ─── Sidebar button ───────────────────────────────────────────────────────── */
+
+.sidebar-btn-wrapper {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+}
+
+.sidebar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #5f6368;
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+  padding: 0;
+  line-height: 1;
+}
+
+.sidebar-btn:hover {
+  background: #f1f3f4;
+  color: #1a73e8;
+}
+
+.sidebar-btn:focus-visible {
+  outline: 2px solid #1a73e8;
+  outline-offset: 2px;
+}
+
+/* ─── Popover shell ────────────────────────────────────────────────────────── */
+
+.sidebar-popover {
+  position: absolute;
+  z-index: 9999;
+  width: 260px;
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.12),
+    0 4px 16px rgba(0, 0, 0, 0.14);
+  overflow: hidden;
+  font-family: 'Google Sans', Roboto, Arial, sans-serif;
+  font-size: 13px;
+}
+
+/* ─── Action list ──────────────────────────────────────────────────────────── */
+
+.sidebar-popover-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px 0;
+}
+
+.sidebar-popover-item {
+  margin: 0;
+  padding: 0;
+}
+
+.sidebar-popover-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s ease;
+}
+
+.sidebar-popover-btn:hover {
+  background: #f1f3f4;
+}
+
+.sidebar-popover-btn:focus-visible {
+  outline: 2px solid #1a73e8;
+  outline-offset: -2px;
+}
+
+.sidebar-popover-label {
+  display: block;
+  color: #202124;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.sidebar-popover-desc {
+  display: block;
+  color: #5f6368;
+  font-size: 11px;
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* ─── Footer ───────────────────────────────────────────────────────────────── */
+
+.sidebar-popover-footer {
+  border-top: 1px solid #e8eaed;
+  padding: 8px 16px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.sidebar-popover-footer-link {
+  color: #9aa0a6;
+  font-size: 11px;
+  text-decoration: none;
+  letter-spacing: 0.01em;
+  transition: color 0.15s ease;
+}
+
+.sidebar-popover-footer-link:hover {
+  color: #5f6368;
+}
