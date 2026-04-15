@@ -104,12 +104,119 @@ function parseMessageRecipients(messageEl) {
   return [...emails];
 }
 
+// ─── Message data extraction ───────────────────────────────────────────────────
+
+/**
+ * Extract the thread subject from the page title.
+ * Gmail sets document.title to "Subject - user@domain.com - Gmail".
+ */
+function getThreadSubject() {
+  // Strip everything from the first " - " that precedes an email address onward.
+  // Handles titles like "Subject - user@domain.com - ITV Mail" or "Subject - Gmail".
+  return document.title
+    .replace(/\s+-\s+[^\s@]+@.+$/, '')
+    .replace(/\s+-\s+Gmail\s*$/, '')
+    .trim() || '(no subject)';
+}
+
+/**
+ * Extract the sender's email address from the message header.
+ * Gmail renders the From address on an element with an [email] attribute.
+ */
+function getMessageSender(messageEl) {
+  const el = messageEl.querySelector('[email]');
+  return el ? el.getAttribute('email') : '';
+}
+
+/**
+ * Extract a human-readable date string from the message header.
+ * Gmail renders the timestamp on a <span> or <td> with a [title] attribute
+ * containing the full date, falling back to [datetime] on a <time> element.
+ */
+function getMessageDate(messageEl) {
+  const timeEl = messageEl.querySelector('[datetime]');
+  if (timeEl) {
+    const dt = timeEl.getAttribute('datetime');
+    try {
+      return new Date(dt).toLocaleString(undefined, {
+        weekday: 'short', year: 'numeric', month: 'short',
+        day: 'numeric', hour: '2-digit', minute: '2-digit',
+      });
+    } catch (_) { return dt; }
+  }
+  return '';
+}
+
+/**
+ * Extract the plain-text body of a message.
+ * Targets [dir="ltr"] which Gmail sets on the message body container —
+ * a stable structural attribute that avoids class-name coupling.
+ */
+function getMessageBodyText(messageEl) {
+  const bodyEl = messageEl.querySelector('[dir="ltr"]');
+  return (bodyEl || messageEl).innerText.trim();
+}
+
+/**
+ * Build a quoted-reply body string in standard email format.
+ */
+function buildQuotedBody(messageEl) {
+  const sender = getMessageSender(messageEl);
+  const date   = getMessageDate(messageEl);
+  const body   = getMessageBodyText(messageEl);
+
+  const header = [date, sender].filter(Boolean).join(', ');
+  const intro  = header ? `On ${header} wrote:` : '';
+  const quoted = body.split('\n').map((l) => '> ' + l).join('\n');
+
+  return '\n\n' + (intro ? intro + '\n' : '') + quoted;
+}
+
 // ─── Action handlers ───────────────────────────────────────────────────────────
 
 /**
- * Trigger a reply scoped to internal-domain recipients only.
- * Currently surfaces a console log + alert stub; compose integration
- * requires access to Gmail's JS API and will be wired in a follow-up.
+ * Inject a value into a plain input/textarea compose field (e.g. Subject)
+ * by simulating real input events so Gmail's React-based UI registers the change.
+ */
+function setComposeField(fieldEl, value) {
+  fieldEl.focus();
+  fieldEl.value = value;
+  fieldEl.dispatchEvent(new Event('input',  { bubbles: true }));
+  fieldEl.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+/**
+ * Add recipient addresses one-by-one into Gmail's To field.
+ *
+ * Gmail's To field is a <div aria-label="To"> containing a child <input>.
+ * Setting .value on the div doesn't work — we must target the inner input,
+ * then fire input/change so Gmail's autocomplete activates, followed by a
+ * synthetic Enter keydown (keyCode 13) to tokenize the address.
+ * A 150ms gap between each address prevents race conditions in the tokenizer.
+ */
+function addRecipientsToToField(toDiv, addresses) {
+  const input = toDiv.querySelector('input');
+  if (!input) {
+    console.warn('[Sidebar] Could not find inner <input> inside To field.');
+    return;
+  }
+
+  function addNext(i) {
+    if (i >= addresses.length) return;
+    input.focus();
+    input.value = addresses[i];
+    input.dispatchEvent(new Event('input',  { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, keyCode: 13, which: 13, key: 'Enter' }));
+    setTimeout(() => addNext(i + 1), 150);
+  }
+
+  addNext(0);
+}
+
+/**
+ * Click Gmail's native Compose button to open the compose tray, then
+ * populate the To and Subject fields once the tray has rendered.
  */
 function triggerInternalOnlyReply(messageEl, internalDomains) {
   const recipients = parseMessageRecipients(messageEl);
@@ -122,9 +229,41 @@ function triggerInternalOnlyReply(messageEl, internalDomains) {
     return;
   }
 
-  // TODO: open Gmail compose pre-populated with `internal` addresses.
-  console.log('[Sidebar] Internal-only recipients:', internal);
-  alert('[Sidebar] Internal only → ' + internal.join(', ') + '\n(compose integration coming soon)');
+  // Find the Compose button by iterating all role="button" elements and
+  // matching on text content — the most resilient approach since Gmail's
+  // compose button has no stable attribute but always reads "Compose".
+  const composeBtn = Array.from(document.querySelectorAll('[role="button"]'))
+    .find((el) => el.innerText.trim() === 'Compose');
+
+  if (!composeBtn) {
+    console.warn('[Sidebar] Could not find Gmail compose button by text match.');
+    return;
+  }
+  console.log('[Sidebar] Compose button found via text match:', composeBtn);
+  composeBtn.click();
+
+  // Wait for the compose tray to render, then populate To and Subject.
+  // 500ms is enough for Gmail's compose animation to complete in practice.
+  setTimeout(() => {
+    const toField      = document.querySelector('[aria-label="To"]');
+    const subjectField = document.querySelector('[aria-label="Subject"]');
+
+    console.log('[Sidebar] Compose fields — To:', toField, '| Subject:', subjectField);
+
+    if (toField) {
+      addRecipientsToToField(toField, internal);
+    } else {
+      console.warn('[Sidebar] Could not find To field in compose tray.');
+    }
+
+    // Delay Subject population until all recipients have been tokenized.
+    // internal.length * 150ms covers the per-address gaps + a small buffer.
+    const subjectDelay = 200 + internal.length * 150;
+    setTimeout(() => {
+      if (subjectField) setComposeField(subjectField, 'Re: ' + getThreadSubject());
+      else console.warn('[Sidebar] Could not find Subject field in compose tray.');
+    }, subjectDelay);
+  }, 500);
 }
 
 /**
