@@ -107,21 +107,6 @@ function parseMessageRecipients(messageEl) {
 // ─── Action handlers ───────────────────────────────────────────────────────────
 
 /**
- * Trigger Gmail's native Reply All for a message.
- * Looks for the Reply All button by its stable data-tooltip or aria-label.
- */
-function triggerReplyAll(messageEl) {
-  const btn =
-    messageEl.querySelector('[data-tooltip="Reply all"]') ||
-    messageEl.querySelector('[aria-label="Reply all"]');
-  if (btn) {
-    btn.click();
-  } else {
-    console.warn('[Sidebar] Could not find Reply All button in message.');
-  }
-}
-
-/**
  * Trigger a reply scoped to internal-domain recipients only.
  * Currently surfaces a console log + alert stub; compose integration
  * requires access to Gmail's JS API and will be wired in a follow-up.
@@ -175,11 +160,6 @@ function createPopover(anchorEl, messageEl, settings) {
 
   // ── Actions ──
   const actions = [
-    {
-      label: 'Reply All',
-      description: 'Reply to everyone on this thread',
-      handler: () => { closeActivePopover(); triggerReplyAll(messageEl); },
-    },
     {
       label: 'ITV Internal Only',
       description: domains.length
