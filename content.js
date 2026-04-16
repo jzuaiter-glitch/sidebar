@@ -255,6 +255,13 @@ function openComposeWith(addresses, bodyText) {
           bodyField.focus();
           bodyField.innerText = bodyText;
           bodyField.dispatchEvent(new Event('input', { bubbles: true }));
+          // Place the cursor at the very top of the body (before the blank lines).
+          const range = document.createRange();
+          range.setStart(bodyField.firstChild || bodyField, 0);
+          range.collapse(true);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
         } else {
           console.warn('[Sidebar] Could not find compose body field.');
         }
@@ -277,7 +284,7 @@ function triggerInternalOnlyReply(messageEl, internalDomains) {
     return;
   }
 
-  openComposeWith(internal, 'A sidebar to Internal ITV.\n\n' + buildQuotedBody(messageEl));
+  openComposeWith(internal, '\n\nA sidebar to Internal ITV.\n\n' + buildQuotedBody(messageEl));
 }
 
 // ─── Recipient picker ──────────────────────────────────────────────────────────
@@ -455,7 +462,7 @@ function createRecipientPicker(messageEl, internalDomains) {
       return;
     }
     closeActivePicker();
-    openComposeWith(selected, 'A sidebar conversation.\n\n' + buildQuotedBody(messageEl));
+    openComposeWith(selected, '\n\nA sidebar conversation.\n\n' + buildQuotedBody(messageEl));
   });
 
   actions.appendChild(cancelBtn);
