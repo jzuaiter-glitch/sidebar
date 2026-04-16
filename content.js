@@ -215,8 +215,44 @@ function addRecipientsToToField(toDiv, addresses) {
 }
 
 /**
- * Click Gmail's native Compose button to open the compose tray, then
- * populate the To and Subject fields once the tray has rendered.
+ * Click Gmail's Compose button, wait for the tray to render, then inject
+ * addresses into the To field one-by-one and populate the Subject.
+ * Shared by ITV Internal Only and Select Recipients.
+ */
+function openComposeWith(addresses) {
+  const composeBtn = Array.from(document.querySelectorAll('[role="button"]'))
+    .find((el) => el.innerText.trim() === 'Compose');
+
+  if (!composeBtn) {
+    console.warn('[Sidebar] Could not find Gmail compose button by text match.');
+    return;
+  }
+  console.log('[Sidebar] Compose button found via text match:', composeBtn);
+  composeBtn.click();
+
+  setTimeout(() => {
+    const toField      = document.querySelector('[aria-label="To"]');
+    const subjectField = document.querySelector('[aria-label="Subject"]');
+
+    console.log('[Sidebar] Compose fields — To:', toField, '| Subject:', subjectField);
+
+    if (toField) {
+      addRecipientsToToField(toField, addresses);
+    } else {
+      console.warn('[Sidebar] Could not find To field in compose tray.');
+    }
+
+    // Delay Subject population until all recipients have been tokenized.
+    const subjectDelay = 200 + addresses.length * 150;
+    setTimeout(() => {
+      if (subjectField) setComposeField(subjectField, 'Re: ' + getThreadSubject());
+      else console.warn('[Sidebar] Could not find Subject field in compose tray.');
+    }, subjectDelay);
+  }, 500);
+}
+
+/**
+ * Filter to internal-domain recipients only and open compose pre-populated.
  */
 function triggerInternalOnlyReply(messageEl, internalDomains) {
   const recipients = parseMessageRecipients(messageEl);
@@ -229,51 +265,206 @@ function triggerInternalOnlyReply(messageEl, internalDomains) {
     return;
   }
 
-  // Find the Compose button by iterating all role="button" elements and
-  // matching on text content — the most resilient approach since Gmail's
-  // compose button has no stable attribute but always reads "Compose".
-  const composeBtn = Array.from(document.querySelectorAll('[role="button"]'))
-    .find((el) => el.innerText.trim() === 'Compose');
+  openComposeWith(internal);
+}
 
-  if (!composeBtn) {
-    console.warn('[Sidebar] Could not find Gmail compose button by text match.');
-    return;
+// ─── Recipient picker ──────────────────────────────────────────────────────────
+
+let activePicker = null;
+
+function closeActivePicker() {
+  if (activePicker) {
+    activePicker.remove();
+    activePicker = null;
   }
-  console.log('[Sidebar] Compose button found via text match:', composeBtn);
-  composeBtn.click();
-
-  // Wait for the compose tray to render, then populate To and Subject.
-  // 500ms is enough for Gmail's compose animation to complete in practice.
-  setTimeout(() => {
-    const toField      = document.querySelector('[aria-label="To"]');
-    const subjectField = document.querySelector('[aria-label="Subject"]');
-
-    console.log('[Sidebar] Compose fields — To:', toField, '| Subject:', subjectField);
-
-    if (toField) {
-      addRecipientsToToField(toField, internal);
-    } else {
-      console.warn('[Sidebar] Could not find To field in compose tray.');
-    }
-
-    // Delay Subject population until all recipients have been tokenized.
-    // internal.length * 150ms covers the per-address gaps + a small buffer.
-    const subjectDelay = 200 + internal.length * 150;
-    setTimeout(() => {
-      if (subjectField) setComposeField(subjectField, 'Re: ' + getThreadSubject());
-      else console.warn('[Sidebar] Could not find Subject field in compose tray.');
-    }, subjectDelay);
-  }, 500);
 }
 
 /**
- * Open the recipient picker modal.
- * TODO: implement full picker UI.
+ * Build one section (Internal or External) of the recipient picker.
+ * Returns the section element and the array of checkbox inputs it contains.
  */
+function buildPickerSection(sectionLabel, addresses, preChecked) {
+  const section = document.createElement('div');
+  section.className = 'sidebar-picker-section';
+
+  const sectionHeader = document.createElement('div');
+  sectionHeader.className = 'sidebar-picker-section-header';
+
+  const nameEl = document.createElement('span');
+  nameEl.className = 'sidebar-picker-section-name';
+  nameEl.textContent = sectionLabel;
+
+  const toggleBtn = document.createElement('button');
+  toggleBtn.className = 'sidebar-picker-toggle';
+  toggleBtn.textContent = preChecked ? 'Deselect All' : 'Select All';
+
+  sectionHeader.appendChild(nameEl);
+  sectionHeader.appendChild(toggleBtn);
+
+  const list = document.createElement('ul');
+  list.className = 'sidebar-picker-list';
+
+  const checkboxes = [];
+
+  for (const email of addresses) {
+    const li = document.createElement('li');
+    li.className = 'sidebar-picker-row';
+
+    const label = document.createElement('label');
+    label.className = 'sidebar-picker-label';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.value = email;
+    checkbox.checked = preChecked;
+    checkbox.className = 'sidebar-picker-checkbox';
+
+    const emailSpan = document.createElement('span');
+    emailSpan.className = 'sidebar-picker-email';
+    emailSpan.textContent = email;
+
+    label.appendChild(checkbox);
+    label.appendChild(emailSpan);
+    li.appendChild(label);
+    list.appendChild(li);
+    checkboxes.push(checkbox);
+
+    // Keep the section toggle label in sync with individual checkbox state.
+    checkbox.addEventListener('change', () => {
+      const allChecked = checkboxes.every((cb) => cb.checked);
+      toggleBtn.textContent = allChecked ? 'Deselect All' : 'Select All';
+    });
+  }
+
+  // Toggle all addresses in this section at once.
+  toggleBtn.addEventListener('click', () => {
+    const shouldCheck = !checkboxes.every((cb) => cb.checked);
+    checkboxes.forEach((cb) => { cb.checked = shouldCheck; });
+    toggleBtn.textContent = shouldCheck ? 'Deselect All' : 'Select All';
+  });
+
+  section.appendChild(sectionHeader);
+  section.appendChild(list);
+  return { section, checkboxes };
+}
+
+/**
+ * Show the Select Recipients picker panel overlaid on the Gmail thread.
+ * Recipients are grouped into Internal (pre-checked) and External sections,
+ * each with a Select All / Deselect All toggle. Send to Selected opens
+ * Gmail's compose tray and injects only the checked addresses.
+ */
+function createRecipientPicker(messageEl, internalDomains) {
+  closeActivePicker();
+  closeActivePopover();
+
+  const allRecipients = parseMessageRecipients(messageEl);
+  const internal = allRecipients.filter((e) =>
+    internalDomains.some((d) => e.endsWith('@' + d))
+  );
+  const external = allRecipients.filter((e) =>
+    !internalDomains.some((d) => e.endsWith('@' + d))
+  );
+
+  // ── Overlay (backdrop) ──
+  const overlay = document.createElement('div');
+  overlay.className = 'sidebar-picker-overlay';
+
+  // ── Panel ──
+  const panel = document.createElement('div');
+  panel.className = 'sidebar-picker';
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-label', 'Select recipients');
+  panel.setAttribute('aria-modal', 'true');
+
+  // ── Header ──
+  const header = document.createElement('div');
+  header.className = 'sidebar-picker-header';
+
+  const titleEl = document.createElement('span');
+  titleEl.className = 'sidebar-picker-title';
+  titleEl.textContent = 'Select Recipients';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'sidebar-picker-close';
+  closeBtn.setAttribute('aria-label', 'Close');
+  closeBtn.textContent = '✕';
+  closeBtn.addEventListener('click', closeActivePicker);
+
+  header.appendChild(titleEl);
+  header.appendChild(closeBtn);
+
+  // ── Body ──
+  const body = document.createElement('div');
+  body.className = 'sidebar-picker-body';
+
+  const allCheckboxes = [];
+
+  if (internal.length > 0) {
+    const { section, checkboxes } = buildPickerSection('Internal', internal, true);
+    body.appendChild(section);
+    allCheckboxes.push(...checkboxes);
+  }
+
+  if (external.length > 0) {
+    const { section, checkboxes } = buildPickerSection('External', external, false);
+    body.appendChild(section);
+    allCheckboxes.push(...checkboxes);
+  }
+
+  if (allCheckboxes.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'sidebar-picker-empty';
+    empty.textContent = 'No recipients found in this message.';
+    body.appendChild(empty);
+  }
+
+  // ── Actions ──
+  const actions = document.createElement('div');
+  actions.className = 'sidebar-picker-actions';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'sidebar-picker-cancel';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', closeActivePicker);
+
+  const sendBtn = document.createElement('button');
+  sendBtn.className = 'sidebar-picker-send';
+  sendBtn.textContent = 'Send to Selected';
+  sendBtn.addEventListener('click', () => {
+    const selected = allCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
+    if (selected.length === 0) {
+      sendBtn.textContent = 'Select at least one recipient';
+      sendBtn.classList.add('sidebar-picker-send--empty');
+      setTimeout(() => {
+        sendBtn.textContent = 'Send to Selected';
+        sendBtn.classList.remove('sidebar-picker-send--empty');
+      }, 2000);
+      return;
+    }
+    closeActivePicker();
+    openComposeWith(selected);
+  });
+
+  actions.appendChild(cancelBtn);
+  actions.appendChild(sendBtn);
+
+  // ── Assemble ──
+  panel.appendChild(header);
+  panel.appendChild(body);
+  panel.appendChild(actions);
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+  activePicker = overlay;
+
+  // Close on backdrop click (clicking the dimmed area outside the panel).
+  overlay.addEventListener('mousedown', (e) => {
+    if (e.target === overlay) closeActivePicker();
+  });
+}
+
 function triggerSelectRecipients(messageEl, internalDomains) {
-  const recipients = parseMessageRecipients(messageEl);
-  console.log('[Sidebar] All recipients:', recipients, '| Internal domains:', internalDomains);
-  alert('[Sidebar] Select Recipients coming soon.\nDetected: ' + recipients.join(', '));
+  createRecipientPicker(messageEl, internalDomains);
 }
 
 // ─── Popover ───────────────────────────────────────────────────────────────────
