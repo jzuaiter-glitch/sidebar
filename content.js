@@ -255,13 +255,24 @@ function openComposeWith(addresses, bodyText) {
           bodyField.focus();
           bodyField.innerText = bodyText;
           bodyField.dispatchEvent(new Event('input', { bubbles: true }));
-          // Place the cursor at the very top of the body (before the blank lines).
-          const range = document.createRange();
-          range.setStart(bodyField.firstChild || bodyField, 0);
-          range.collapse(true);
-          const sel = window.getSelection();
-          sel.removeAllRanges();
-          sel.addRange(range);
+          // Position cursor in the space after the label line:
+          // find the div containing the label text, then walk 3 sibling divs
+          // forward (one per \n) to land in the gap before the quoted message.
+          const labelNode = document.createTreeWalker(
+            bodyField, NodeFilter.SHOW_TEXT, null, false
+          ).nextNode();
+          if (labelNode) {
+            let target = labelNode.parentElement;
+            for (let i = 0; i < 3 && target && target.nextElementSibling; i++) {
+              target = target.nextElementSibling;
+            }
+            const range = document.createRange();
+            range.setStart(target || bodyField, 0);
+            range.collapse(true);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+          }
         } else {
           console.warn('[Sidebar] Could not find compose body field.');
         }
@@ -284,7 +295,7 @@ function triggerInternalOnlyReply(messageEl, internalDomains) {
     return;
   }
 
-  openComposeWith(internal, '\n\nA sidebar to Internal ITV.\n\n' + buildQuotedBody(messageEl));
+  openComposeWith(internal, 'A sidebar to Internal ITV.\n\n\n' + buildQuotedBody(messageEl));
 }
 
 // ─── Recipient picker ──────────────────────────────────────────────────────────
@@ -462,7 +473,7 @@ function createRecipientPicker(messageEl, internalDomains) {
       return;
     }
     closeActivePicker();
-    openComposeWith(selected, '\n\nA sidebar conversation.\n\n' + buildQuotedBody(messageEl));
+    openComposeWith(selected, 'A sidebar conversation.\n\n\n' + buildQuotedBody(messageEl));
   });
 
   actions.appendChild(cancelBtn);
