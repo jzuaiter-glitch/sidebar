@@ -216,10 +216,11 @@ function addRecipientsToToField(toDiv, addresses) {
 
 /**
  * Click Gmail's Compose button, wait for the tray to render, then inject
- * addresses into the To field one-by-one and populate the Subject.
+ * addresses into the To field one-by-one, populate the Subject, and
+ * optionally set plain-text body content.
  * Shared by ITV Internal Only and Select Recipients.
  */
-function openComposeWith(addresses) {
+function openComposeWith(addresses, bodyText) {
   const composeBtn = Array.from(document.querySelectorAll('[role="button"]'))
     .find((el) => el.innerText.trim() === 'Compose');
 
@@ -242,11 +243,22 @@ function openComposeWith(addresses) {
       console.warn('[Sidebar] Could not find To field in compose tray.');
     }
 
-    // Delay Subject population until all recipients have been tokenized.
+    // Delay Subject and body population until all recipients have been tokenized.
     const subjectDelay = 200 + addresses.length * 150;
     setTimeout(() => {
       if (subjectField) setComposeField(subjectField, 'Re: ' + getThreadSubject());
       else console.warn('[Sidebar] Could not find Subject field in compose tray.');
+
+      if (bodyText) {
+        const bodyField = document.querySelector('div[aria-label="Message Body"]');
+        if (bodyField) {
+          bodyField.focus();
+          bodyField.innerText = bodyText;
+          bodyField.dispatchEvent(new Event('input', { bubbles: true }));
+        } else {
+          console.warn('[Sidebar] Could not find compose body field.');
+        }
+      }
     }, subjectDelay);
   }, 500);
 }
@@ -265,7 +277,7 @@ function triggerInternalOnlyReply(messageEl, internalDomains) {
     return;
   }
 
-  openComposeWith(internal);
+  openComposeWith(internal, 'A sidebar to Internal ITV.\n\n' + buildQuotedBody(messageEl));
 }
 
 // ─── Recipient picker ──────────────────────────────────────────────────────────
@@ -443,7 +455,7 @@ function createRecipientPicker(messageEl, internalDomains) {
       return;
     }
     closeActivePicker();
-    openComposeWith(selected);
+    openComposeWith(selected, 'A sidebar conversation.\n\n' + buildQuotedBody(messageEl));
   });
 
   actions.appendChild(cancelBtn);
