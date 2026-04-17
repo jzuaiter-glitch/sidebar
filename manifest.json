@@ -3,8 +3,17 @@
   "name": "Sidebar for Gmail",
   "version": "0.1.0",
   "description": "Smart reply options injected directly into Gmail threads.",
-  "permissions": ["storage"],
-  "host_permissions": ["https://mail.google.com/*"],
+  "permissions": ["storage", "identity"],
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "https://gmail.googleapis.com/*"
+  ],
+  "oauth2": {
+    "client_id": "1006246302424-td10k7lfs33h1ecsmb4jet68ihdmbha9.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/gmail.modify"
+    ]
+  },
   "background": {
     "service_worker": "background.js"
   },
