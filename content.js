@@ -13,58 +13,6 @@
 
 const SENTINEL = 'data-sidebar-injected';
 
-// ─── Thread labelling ─────────────────────────────────────────────────────────
-
-/**
- * Extract the Gmail thread ID from the current URL hash.
- * Gmail thread URLs follow patterns like:
- *   #inbox/THREAD_ID  |  #search/query/THREAD_ID  |  #all/THREAD_ID
- */
-function getCurrentThreadId() {
-  const parts = window.location.hash.split('/');
-  return parts.length > 1 ? parts[parts.length - 1] : null;
-}
-
-/**
- * Watch for Gmail's "Message sent" notification, then ask the background
- * worker to apply the "Sidebar" label to the given thread.
- *
- * Gmail shows a toast containing the text "Message sent" whenever a send
- * succeeds.  We observe added DOM nodes until we see that text, then
- * disconnect and fire the label call.  A 10-minute timeout guards against
- * leaking observers if the compose window is discarded instead.
- */
-function watchForSentNotification(threadId) {
-  if (!threadId) {
-    console.warn('[Sidebar] No thread ID — label will not be applied.');
-    return;
-  }
-
-  const observer = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      for (const node of mutation.addedNodes) {
-        if (node.nodeType !== Node.ELEMENT_NODE) continue;
-        if (node.textContent && node.textContent.includes('Message sent')) {
-          observer.disconnect();
-          chrome.runtime.sendMessage({ action: 'applyLabel', threadId }, (res) => {
-            if (chrome.runtime.lastError) {
-              console.error('[Sidebar] sendMessage error:', chrome.runtime.lastError.message);
-            } else if (res && !res.ok) {
-              console.error('[Sidebar] applyLabel failed:', res.error);
-            }
-          });
-          return;
-        }
-      }
-    }
-  });
-
-  observer.observe(document.body, { childList: true, subtree: true });
-
-  // Disconnect automatically so we don't leak if the user discards.
-  setTimeout(() => observer.disconnect(), 10 * 60 * 1000);
-}
-
 // ─── Domain detection ─────────────────────────────────────────────────────────
 
 /**
@@ -347,7 +295,6 @@ function triggerInternalOnlyReply(messageEl, internalDomains) {
     return;
   }
 
-  chrome.runtime.sendMessage({ action: 'getAuthToken', threadId: getCurrentThreadId() });
   openComposeWith(internal, 'A sidebar to Internal ITV.\n\n\n' + buildQuotedBody(messageEl));
 }
 
@@ -526,7 +473,6 @@ function createRecipientPicker(messageEl, internalDomains) {
       return;
     }
     closeActivePicker();
-    chrome.runtime.sendMessage({ action: 'getAuthToken', threadId: getCurrentThreadId() });
     openComposeWith(selected, 'A sidebar conversation.\n\n\n' + buildQuotedBody(messageEl));
   });
 
