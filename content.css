@@ -336,3 +336,16 @@
 .sidebar-picker-send--empty:hover {
   background: #f1f3f4;
 }
+
+/* ─── Thread list dot ──────────────────────────────────────────────────────── */
+
+.sidebar-thread-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #1a73e8;
+  margin-right: 5px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}

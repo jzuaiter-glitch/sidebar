@@ -13,6 +13,86 @@
 
 const SENTINEL = 'data-sidebar-injected';
 
+// In-memory set of thread IDs where a Sidebar compose was triggered.
+// Populated from chrome.storage.local on init and updated on each trigger.
+let sidebarThreadIds = new Set();
+
+// ─── Thread dot storage ───────────────────────────────────────────────────────
+
+/**
+ * Extract the Gmail thread ID from the current URL hash.
+ * Gmail thread URLs follow patterns like:
+ *   #inbox/THREAD_ID  |  #search/query/THREAD_ID  |  #all/THREAD_ID
+ */
+function getCurrentThreadId() {
+  const parts = window.location.hash.split('/');
+  return parts.length > 1 ? parts[parts.length - 1] : null;
+}
+
+/**
+ * Persist a thread ID to chrome.storage.local and update the in-memory set,
+ * then immediately re-run dot injection so the indicator appears right away.
+ */
+async function saveThreadAsSidebarred(threadId) {
+  if (!threadId) return;
+  sidebarThreadIds.add(threadId);
+  const data = await new Promise((r) => chrome.storage.local.get(['sidebarThreads'], r));
+  const stored = new Set(data.sidebarThreads || []);
+  stored.add(threadId);
+  chrome.storage.local.set({ sidebarThreads: [...stored] });
+  processThreadDots();
+}
+
+// ─── Thread dot injection ─────────────────────────────────────────────────────
+
+/**
+ * Inject a filled blue dot into a thread-list row, inline before the sender
+ * names cell.  Uses data-sidebar-dot as a sentinel to prevent duplicates.
+ *
+ * Gmail thread-list rows carry [data-thread-id].  Inside each <tr>, the first
+ * two <td>s are typically the checkbox and the star/importance columns.  The
+ * third (index 2) or later <td> that contains a <span> is the sender names
+ * cell — we insert the dot before its first <span>.
+ */
+function injectThreadDot(rowEl) {
+  if (rowEl.hasAttribute('data-sidebar-dot')) return;
+  rowEl.setAttribute('data-sidebar-dot', 'true');
+
+  const dot = document.createElement('span');
+  dot.className = 'sidebar-thread-dot';
+  dot.setAttribute('aria-hidden', 'true');
+
+  const tds = rowEl.querySelectorAll('td');
+  let targetTd = null;
+  for (let i = 2; i < tds.length; i++) {
+    if (tds[i].querySelector('span')) {
+      targetTd = tds[i];
+      break;
+    }
+  }
+  if (!targetTd && tds.length > 2) targetTd = tds[2];
+  if (!targetTd) return;
+
+  const firstSpan = targetTd.querySelector('span');
+  if (firstSpan) {
+    firstSpan.parentElement.insertBefore(dot, firstSpan);
+  } else {
+    targetTd.insertBefore(dot, targetTd.firstChild);
+  }
+}
+
+/**
+ * Scan all visible thread-list rows and inject a dot on any whose thread ID
+ * is recorded in sidebarThreadIds.
+ */
+function processThreadDots() {
+  document.querySelectorAll('[data-thread-id]').forEach((rowEl) => {
+    if (sidebarThreadIds.has(rowEl.getAttribute('data-thread-id'))) {
+      injectThreadDot(rowEl);
+    }
+  });
+}
+
 // ─── Domain detection ─────────────────────────────────────────────────────────
 
 /**
@@ -282,6 +362,157 @@ function openComposeWith(addresses, bodyText) {
 }
 
 /**
+ * Show a brief, self-dismissing notification bar at the top of the Gmail
+ * viewport.  Used for errors that the user needs to act on.
+ */
+function showSidebarNotification(message) {
+  const existing = document.getElementById('sidebar-notification');
+  if (existing) existing.remove();
+
+  const bar = document.createElement('div');
+  bar.id = 'sidebar-notification';
+  bar.setAttribute('role', 'alert');
+  bar.textContent = message;
+
+  Object.assign(bar.style, {
+    position:   'fixed',
+    top:        '0',
+    left:       '50%',
+    transform:  'translateX(-50%)',
+    zIndex:     '999999',
+    background: '#202124',
+    color:      '#ffffff',
+    font:       '13px/1.5 "Google Sans", Roboto, Arial, sans-serif',
+    padding:    '10px 20px',
+    borderRadius: '0 0 8px 8px',
+    boxShadow:  '0 2px 8px rgba(0,0,0,0.3)',
+    cursor:     'default',
+  });
+
+  document.body.appendChild(bar);
+  setTimeout(() => bar.remove(), 6000);
+}
+
+/**
+ * Full Gmail API flow for creating a properly-threaded sidebar draft:
+ *
+ *  1. Get OAuth token via background worker (chrome.identity.getAuthToken)
+ *  2. Read thread ID from Gmail URL (last segment after #inbox/, #sent/, etc.)
+ *  3. gmail.users.threads.get — fetch last message's Message-ID header
+ *  4. gmail.users.drafts.create — MIME draft with threadId, In-Reply-To,
+ *     References, To, Subject, and sidebar prefix body
+ *  5. Navigate to mail.google.com/mail/#drafts/[draftId]
+ *
+ * Falls back to DOM-based openComposeWith if any step fails.
+ */
+async function openSidebarDraft(recipients, bodyText) {
+  const threadId = getCurrentThreadId();
+  saveThreadAsSidebarred(threadId);
+
+  if (!threadId) {
+    console.warn('[Sidebar] No thread ID — falling back to DOM compose.');
+    openComposeWith(recipients, bodyText);
+    return;
+  }
+
+  // ── Step 1: OAuth token ───────────────────────────────────────────────────
+  let token;
+  try {
+    const res = await chrome.runtime.sendMessage({ action: 'getAuthToken' });
+    if (!res?.ok) throw new Error(res?.error || 'unknown error');
+    token = res.token;
+  } catch (err) {
+    if (err.message.includes('Extension context invalidated')) {
+      showSidebarNotification('Please reload the Gmail tab to reconnect Sidebar.');
+      return;
+    }
+    console.error('[Sidebar] getAuthToken failed:', err);
+    openComposeWith(recipients, bodyText);
+    return;
+  }
+
+  // ── Step 2 is implicit — threadId already read from URL above ─────────────
+
+  // ── Step 3: threads.get — last message's Message-ID ──────────────────────
+  let messageId, references, apiSubject;
+  try {
+    const url =
+      `https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}` +
+      '?format=metadata' +
+      '&metadataHeaders=Message-ID' +
+      '&metadataHeaders=References' +
+      '&metadataHeaders=Subject';
+
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error(`threads.get ${res.status}`);
+
+    const thread   = await res.json();
+    const messages = thread.messages ?? [];
+    if (messages.length === 0) throw new Error('Thread has no messages.');
+
+    const hdrs = {};
+    for (const h of (messages[messages.length - 1].payload?.headers ?? [])) {
+      hdrs[h.name.toLowerCase()] = h.value;
+    }
+    messageId  = hdrs['message-id']  ?? '';
+    references = hdrs['references']  ?? '';
+    apiSubject = hdrs['subject']     ?? '';
+  } catch (err) {
+    console.error('[Sidebar] threads.get failed:', err);
+    openComposeWith(recipients, bodyText);
+    return;
+  }
+
+  // ── Step 4: drafts.create ─────────────────────────────────────────────────
+  let draftId;
+  try {
+    const subject  = apiSubject || getThreadSubject();
+    const toLine   = recipients.join(', ');
+    const subjLine = subject.startsWith('Re:') ? subject : `Re: ${subject}`;
+    const newRefs  = [references, messageId].filter(Boolean).join(' ').trim();
+
+    const mimeHeaders = [
+      `To: ${toLine}`,
+      `Subject: ${subjLine}`,
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=UTF-8',
+    ];
+    if (messageId) mimeHeaders.push(`In-Reply-To: ${messageId}`);
+    if (newRefs)   mimeHeaders.push(`References: ${newRefs}`);
+
+    const mime  = mimeHeaders.join('\r\n') + '\r\n\r\n' + bodyText;
+    const bytes = new TextEncoder().encode(mime);
+    let binary  = '';
+    for (const b of bytes) binary += String.fromCharCode(b);
+    const raw   = btoa(binary)
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+    const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts', {
+      method: 'POST',
+      headers: {
+        Authorization:  `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message: { threadId, raw } }),
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(`drafts.create ${res.status}: ${detail}`);
+    }
+    draftId = (await res.json()).id;
+  } catch (err) {
+    console.error('[Sidebar] drafts.create failed:', err);
+    openComposeWith(recipients, bodyText);
+    return;
+  }
+
+  // ── Step 5: open draft in Gmail compose tray ──────────────────────────────
+  window.location.href = `https://mail.google.com/mail/u/0/#inbox/${threadId}?compose=${draftId}`;
+}
+
+/**
  * Filter to internal-domain recipients only and open compose pre-populated.
  */
 function triggerInternalOnlyReply(messageEl, internalDomains) {
@@ -295,7 +526,7 @@ function triggerInternalOnlyReply(messageEl, internalDomains) {
     return;
   }
 
-  openComposeWith(internal, 'A sidebar to Internal ITV.\n\n\n' + buildQuotedBody(messageEl));
+  openSidebarDraft(internal, 'A sidebar to Internal ITV.\n\n\n' + buildQuotedBody(messageEl));
 }
 
 // ─── Recipient picker ──────────────────────────────────────────────────────────
@@ -473,7 +704,7 @@ function createRecipientPicker(messageEl, internalDomains) {
       return;
     }
     closeActivePicker();
-    openComposeWith(selected, 'A sidebar conversation.\n\n\n' + buildQuotedBody(messageEl));
+    openSidebarDraft(selected, 'A sidebar conversation.\n\n\n' + buildQuotedBody(messageEl));
   });
 
   actions.appendChild(cancelBtn);
@@ -664,7 +895,10 @@ function processMessages(settings) {
 
 function startObserver(settings) {
   // Re-process on any subtree mutation — Gmail is highly dynamic
-  const observer = new MutationObserver(() => processMessages(settings));
+  const observer = new MutationObserver(() => {
+    processMessages(settings);
+    processThreadDots();
+  });
 
   observer.observe(document.body, {
     childList: true,
@@ -673,12 +907,17 @@ function startObserver(settings) {
 
   // Initial pass
   processMessages(settings);
+  processThreadDots();
 }
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
 async function init() {
   const settings = await loadSettings();
+
+  // Load persisted sidebar thread IDs for dot indicators
+  const dotData = await new Promise((r) => chrome.storage.local.get(['sidebarThreads'], r));
+  sidebarThreadIds = new Set(dotData.sidebarThreads || []);
 
   // Detect and persist the user's domain if not already stored
   if (!settings.detectedDomain) {
